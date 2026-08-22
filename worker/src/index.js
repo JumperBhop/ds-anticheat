@@ -74,14 +74,25 @@ function renderWorld(){
   var html=arr.map(function(m){
     var fr=m.feeders.map(function(f){
       var del=f.deleted?' <span class="badge">geloescht</span>':'';
-      return '<tr data-s="'+esc((f.name+' '+m.main).toLowerCase())+'"><td><b>'+esc(f.name)+'</b> <span style="color:#9b8c6a">feedet</span> <b>'+esc(m.main)+'</b></td><td style="text-align:center">'+f.villages.length+'</td><td class="mono" style="font-size:12px">'+f.villages.map(esc).join(', ')+'</td><td style="text-align:center">'+(f.oda||0).toLocaleString('de-DE')+del+'</td></tr>';
+      return '<tr data-s="'+esc((f.name+' '+m.main).toLowerCase())+'"><td><b class="fn" data-fid="'+esc(f.id)+'">'+esc(f.name)+'</b> <span style="color:#9b8c6a">feedet</span> <b>'+esc(m.main)+'</b></td><td style="text-align:center">'+f.villages.length+'</td><td class="mono" style="font-size:12px">'+f.villages.map(esc).join(', ')+'</td><td style="text-align:center">'+(f.oda||0).toLocaleString('de-DE')+del+'</td></tr>';
     }).join('');
     return '<div class="case" data-s="'+esc(m.main.toLowerCase())+'"><h3>'+esc(m.main)+' <span style="color:#9b8c6a;font-size:13px">(ODA '+(m.mainOda||0).toLocaleString('de-DE')+')</span></h3>'+
       '<div class="meta">breit gepusht: <b>'+m.susVillages+' Doerfer</b> von <b>'+m.susFeeders+' verdaechtigen Accounts</b>'+(m.nDel?' &middot; <span class="badge">'+m.nDel+' geloescht</span>':'')+'</div>'+
       '<table><thead><tr><th>Wer feedet wen</th><th>Doerfer</th><th>Koordinaten der Doerfer</th><th>Feeder-ODA</th></tr></thead><tbody>'+fr+'</tbody></table></div>';
   }).join('');
-  document.getElementById('wtab').innerHTML='<p style="color:#9b8c6a;font-size:13px">'+arr.length+' verdaechtige Mains in '+esc(w)+' (bekommen Doerfer von kampf-inaktiven/geloeschten Accounts).</p>'+(html||'<p>keine</p>');
-  filt();
+  document.getElementById('wtab').innerHTML='<p style="color:#9b8c6a;font-size:13px">'+arr.length+' verdaechtige Mains in '+esc(w)+' (bekommen Doerfer von kampf-inaktiven/geloeschten Accounts). Fehlende Namen werden automatisch nachgeladen.</p>'+(html||'<p>keine</p>');
+  filt(); resolveNames(w);
+}
+var TOK=new URLSearchParams(location.search).get('s');
+function resolveNames(w){
+  var wid=(D&&D.worldIds||{})[w]; if(!wid)return;
+  var els=[].slice.call(document.querySelectorAll('#wtab .fn')).filter(function(e){return e.textContent.charAt(0)==='#';}).slice(0,400);
+  var i=0;
+  (function nx(){ if(i>=els.length)return; var el=els[i++], id=el.getAttribute('data-fid');
+    fetch('/name?s='+encodeURIComponent(TOK)+'&wid='+encodeURIComponent(wid)+'&id='+encodeURIComponent(id))
+      .then(function(r){return r.json();})
+      .then(function(j){ if(j&&j.name&&j.name.charAt(0)!=='#'&&j.name!==''){ el.textContent=j.name; } })
+      .catch(function(){}).finally(function(){ setTimeout(nx,80); }); })();
 }
 function filt(){var q=document.getElementById('q').value.toLowerCase();['#mains tr','.case','#wtab tr','#wtab .case'].forEach(function(sel){document.querySelectorAll(sel).forEach(function(el){var s=el.getAttribute('data-s');if(s===null)return;el.style.display=(!q||s.indexOf(q)>=0)?'':'none';});});}
 render();
@@ -99,6 +110,19 @@ export default {
       try{ JSON.parse(body); }catch(e){ return new Response('invalid json',{status:400}); }
       await env.AC.put('data', body);
       return new Response('ok');
+    }
+
+    if(p==='/name'){
+      if(!env.DASH_TOKEN || url.searchParams.get('s')!==env.DASH_TOKEN) return new Response('{}',{status:403,headers:{'content-type':'application/json'}});
+      const wid=url.searchParams.get('wid'), id=url.searchParams.get('id');
+      if(!wid||!id) return new Response('{}',{headers:{'content-type':'application/json'}});
+      const k='nm:'+wid+':'+id;
+      let name=await env.AC.get(k);
+      if(name===null){
+        try{ const t=await (await fetch('https://ds-ultimate.de/api/'+wid+'/player/'+id+'/history')).text(); const j=JSON.parse(t); name=(j.data&&j.data[0]&&j.data[0].name)||''; }catch(e){ name=''; }
+        await env.AC.put(k, name, {expirationTtl: 60*60*24*30});
+      }
+      return new Response(JSON.stringify({name}),{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'}});
     }
 
     if(p==='/' || p==='/dashboard'){

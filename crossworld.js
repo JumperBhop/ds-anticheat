@@ -41,11 +41,14 @@ function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;',
 // --- DS-Ultimate: Welt-ID + Punkte-Historie ---
 const widCache={}, histCache={};
 function parseNum(s){ s=String(s).replace(/<[^>]*>/g,'').replace(/[^0-9.,KMkm]/g,'').trim(); const m=s.match(/([0-9]+(?:[.,][0-9]+)?)\s*([KMkm]?)/); if(!m)return null; let v=parseFloat(m[1].replace(',','.')); if(/k/i.test(m[2]))v*=1e3; if(/m/i.test(m[2]))v*=1e6; return Math.round(v); }
-async function duWorldId(world, samplePid){
+async function duWorldId(world, sample){
   if(world in widCache) return widCache[world];
-  const n=world.replace(/^de/,''); let id=null;
-  try{ const h=await (await fetch(`https://ds-ultimate.de/de/${n}/player/${samplePid}`)).text(); const m=h.match(/\/api\/(\d+)\/player/); if(m)id=m[1]; }catch(e){}
-  await sleep(120); return widCache[world]=id;
+  const n=world.replace(/^de/,''); const samples=Array.isArray(sample)?sample:[sample]; let id=null;
+  for(const pid of samples){ if(!pid) continue;
+    try{ const h=await (await fetch(`https://ds-ultimate.de/de/${n}/player/${pid}`)).text(); const m=h.match(/\/api\/(\d+)\/player/); if(m){id=m[1];break;} }catch(e){}
+    await sleep(120);
+  }
+  return widCache[world]=id;
 }
 async function duHistory(wid, pid){
   if(!wid) return [];
@@ -96,12 +99,12 @@ function analyzeMains(d, ODA_MULE, MIN_FLOW){
   console.log('\n'+C.gold+C.b+BANNER+C.r+'\n');
   console.log(`Scanne ${C.b}${WORLDS.length}${C.r} Welten (2er-Schritt): ${WORLDS[0]} ... ${WORLDS[WORLDS.length-1]}\n`);
 
-  const names={}, points={}, rel={}, scanned=[], sampleP={}, rawByWorld={}, worldData={};
+  const names={}, points={}, rel={}, scanned=[], sampleP={}, sampleList={}, rawByWorld={}, worldData={};
   for(const w of WORLDS){
     process.stdout.write(`  ${w} ... `);
     let data; try{ data=await loadWorld(w); }catch(e){ console.log(C.gray+'nicht erreichbar'+C.r); continue; }
     scanned.push(w); worldData[w]=data;
-    for(const id in data.players){ names[id]=data.players[id].name; const p=data.players[id].points; if(!points[id]||p>points[id])points[id]=p; if(!sampleP[w])sampleP[w]=id; }
+    for(const id in data.players){ names[id]=data.players[id].name; const p=data.players[id].points; if(!points[id]||p>points[id])points[id]=p; if(!sampleP[w])sampleP[w]=id; (sampleList[w] ||= []); if(sampleList[w].length<6)sampleList[w].push(id); }
     const pp=pushPairs(data); rawByWorld[w]=pp;
     pp.forEach(p=>{
       const k=p.mainId+'<'+p.feederId;
@@ -127,7 +130,7 @@ function analyzeMains(d, ODA_MULE, MIN_FLOW){
   const graphs={}; // "world|pid" -> series
   for(const c of cases.slice(0,GRAPH_CASES)){
     for(const w of c.worldsList){
-      const wid=await duWorldId(w, sampleP[w]||c.main);
+      const wid=await duWorldId(w, sampleList[w]||sampleP[w]||c.main);
       for(const pid of [c.main,c.feeder]){
         const key=w+'|'+pid; if(graphs[key]!==undefined) continue;
         graphs[key]=await duHistory(wid,pid);
@@ -148,7 +151,7 @@ function analyzeMains(d, ODA_MULE, MIN_FLOW){
   async function resolveName(w,id){
     if(names[id]) return names[id];
     if(nameLookups>=MAX_NAME) return '#'+id;
-    const wid=await duWorldId(w, sampleP[w]||id); if(!wid) return '#'+id;
+    const wid=await duWorldId(w, sampleList[w]||sampleP[w]||id); if(!wid) return '#'+id;
     nameLookups++;
     try{ const t=await (await fetch(`https://ds-ultimate.de/api/${wid}/player/${id}/history`)).text(); const j=JSON.parse(t); const n=j.data&&j.data[0]&&j.data[0].name; await sleep(120); if(n){ names[id]=n; return n; } }catch(e){ await sleep(120); }
     return '#'+id;
@@ -168,7 +171,9 @@ function analyzeMains(d, ODA_MULE, MIN_FLOW){
     }
     perWorldMains[w]=out;
   }
-  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,perWorldMains,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
+  const worldIds={};
+  for(const w of scanned){ worldIds[w]=await duWorldId(w, sampleList[w]||sampleP[w]); }
+  const payload={generated:gen,worldsScanned:scanned,worldIds,cases:casesOut,perWorldMains,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
   const payloadStr=JSON.stringify(payload);
   fs.writeFileSync(path.join(OUT,'data.json'), JSON.stringify(payload,null,2));
 
