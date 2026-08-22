@@ -69,19 +69,20 @@ function asciiSpark(series){ if(series.length<2)return'(keine Historie)'; const 
   console.log('\n'+C.gold+C.b+BANNER+C.r+'\n');
   console.log(`Scanne ${C.b}${WORLDS.length}${C.r} Welten (2er-Schritt): ${WORLDS[0]} ... ${WORLDS[WORLDS.length-1]}\n`);
 
-  const names={}, points={}, rel={}, scanned=[], sampleP={};
+  const names={}, points={}, rel={}, scanned=[], sampleP={}, rawByWorld={};
   for(const w of WORLDS){
     process.stdout.write(`  ${w} ... `);
     let data; try{ data=await loadWorld(w); }catch(e){ console.log(C.gray+'nicht erreichbar'+C.r); continue; }
     scanned.push(w);
     for(const id in data.players){ names[id]=data.players[id].name; const p=data.players[id].points; if(!points[id]||p>points[id])points[id]=p; if(!sampleP[w])sampleP[w]=id; }
-    pushPairs(data).forEach(p=>{
+    const pp=pushPairs(data); rawByWorld[w]=pp;
+    pp.forEach(p=>{
       const k=p.mainId+'<'+p.feederId;
       const e=rel[k] ||= {main:p.mainId,feeder:p.feederId,worlds:new Set(),villages:0,mule:true,deleted:0,perWorld:[]};
       e.worlds.add(w); e.villages+=p.count; if(!p.mule)e.mule=false; if(p.deleted)e.deleted++;
       e.perWorld.push({world:w,villages:p.count,oda:p.odaB,deleted:p.deleted});
     });
-    console.log(C.grn+'ok'+C.r);
+    console.log(C.grn+'ok'+C.r+C.gray+` (${pp.length} Verdaechtige, ${pp.filter(x=>x.mule).length} Proxy)`+C.r);
   }
 
   const cases=Object.values(rel).filter(e=>e.worlds.size>=CROSS_MIN)
@@ -115,7 +116,14 @@ function asciiSpark(series){ if(series.length<2)return'(keine Historie)'; const 
     if(idx<GRAPH_CASES) c.worldsList.forEach(w=>{ g[w]={main:graphs[w+'|'+c.main]||[], feeder:graphs[w+'|'+c.feeder]||[]}; });
     return {main:nm(c.main),feeder:nm(c.feeder),worlds:c.worldsList,villages:c.villages,perWorld:c.perWorld,feederKampfInaktiv:c.mule,graphs:g};
   });
-  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
+  // Einzel-Welt-Verdaechtige (hier steckt die Masse der aktuellen Proxys)
+  const perWorldSuspects={};
+  scanned.forEach(w=>{
+    const arr=(rawByWorld[w]||[]).map(p=>({feeder:nm(p.feederId),main:nm(p.mainId),villages:p.count,oda:p.odaB,mule:p.mule,deleted:p.deleted,conc:Math.round(p.conc*100)}));
+    arr.sort((a,b)=> (b.mule-a.mule) || (b.villages-a.villages));
+    perWorldSuspects[w]=arr.slice(0,400);
+  });
+  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,perWorldSuspects,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
   const payloadStr=JSON.stringify(payload);
   fs.writeFileSync(path.join(OUT,'data.json'), JSON.stringify(payload,null,2));
 

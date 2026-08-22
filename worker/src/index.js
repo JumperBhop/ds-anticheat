@@ -29,7 +29,12 @@ table{border-collapse:collapse;width:100%;font-size:13px;margin:6px 0}th,td{bord
 <div class="disc"><b>&#9888; Verdacht, kein Beweis.</b> Basiert ausschliesslich auf <b>oeffentlichen</b> Spieldaten (offizielle <span class="mono">map/*.txt</span>-Exporte + DS-Ultimate-Punktehistorie). Die endgueltige Feststellung (IP, Geraet, Zahlung) kann nur InnoGames treffen. Diese Seite priorisiert, <i>wo sich ein genauer Blick lohnt</i>.</div>
 <div class="stats" id="stats"></div>
 <input class="q" id="q" placeholder="Nach Spielername filtern ..." oninput="filt()">
-<h2>Systematisch gepushte Mains</h2><div id="mains"></div>
+<h2>Verdaechtige pro Welt</h2>
+<div style="margin:8px 0"><label style="color:#9b8c6a;font-size:14px">Welt:&nbsp;</label>
+<select id="wsel" onchange="renderWorld()" style="background:#12100c;color:#e9e2d0;border:1px solid #3a2f18;border-radius:6px;padding:8px 10px;font-size:14px"></select>
+<label style="color:#9b8c6a;font-size:13px;margin-left:16px"><input type="checkbox" id="onlyproxy" checked onchange="renderWorld()"> nur Proxy-Verdacht (kampf-inaktiv)</label></div>
+<div id="wtab"></div>
+<h2>Systematisch gepushte Mains (Cross-Welt)</h2><div id="mains"></div>
 <h2>Cross-Welt-Faelle (mit Punkte-Kurven)</h2>
 <p style="color:#9b8c6a;font-size:13px">Dieselbe Feeder&rarr;Main-Beziehung ueber mehrere Welten = praktisch kein Zufall. Pro Welt: geadelte Doerfer + Punktekurve von Main &amp; Feeder.</p>
 <div id="cases"></div>
@@ -63,8 +68,21 @@ function render(){
       '<div class="gr">'+gr+'</div></div>';
   }).join('')||'<p style="color:#9b8c6a">Keine Cross-Welt-Faelle in den aktuellen Daten.</p>';
 }
-function filt(){var q=document.getElementById('q').value.toLowerCase();['#mains tr','.case'].forEach(function(sel){document.querySelectorAll(sel).forEach(function(el){var s=el.getAttribute('data-s');if(s===null)return;el.style.display=(!q||s.indexOf(q)>=0)?'':'none';});});}
+function renderWorld(){
+  var pw=D&&D.perWorldSuspects||{}; var w=document.getElementById('wsel').value; var only=document.getElementById('onlyproxy').checked;
+  var arr=(pw[w]||[]).filter(function(x){return !only||x.mule;});
+  var rows=arr.map(function(x){
+    var flag=x.mule?'<span class="badge">Proxy-Verdacht</span>':'<span style="color:#888">kriegsaehnlich</span>';
+    var del=x.deleted?' <span class="badge">geloescht</span>':'';
+    return '<tr data-s="'+esc((x.feeder+' '+x.main).toLowerCase())+'"><td>'+esc(x.feeder)+'</td><td>'+esc(x.main)+'</td><td style="text-align:center"><b>'+x.villages+'</b></td><td style="text-align:center">'+(x.conc||0)+'%</td><td style="text-align:center">'+(x.oda||0).toLocaleString('de-DE')+'</td><td>'+flag+del+'</td></tr>';
+  }).join('');
+  document.getElementById('wtab').innerHTML='<p style="color:#9b8c6a;font-size:13px">'+arr.length+' Verdaechtige in '+esc(w)+' (Feeder adelt einseitig einen Main).</p>'+
+    '<table><thead><tr><th>Feeder (gibt)</th><th>Main (bekommt)</th><th>Doerfer</th><th>Konz.</th><th>Feeder-ODA</th><th>Bewertung</th></tr></thead><tbody>'+(rows||'<tr><td colspan=6>keine</td></tr>')+'</tbody></table>';
+  filt();
+}
+function filt(){var q=document.getElementById('q').value.toLowerCase();['#mains tr','.case','#wtab tr'].forEach(function(sel){document.querySelectorAll(sel).forEach(function(el){var s=el.getAttribute('data-s');if(s===null)return;el.style.display=(!q||s.indexOf(q)>=0)?'':'none';});});}
 render();
+(function(){var pw=D&&D.perWorldSuspects||{};var ks=Object.keys(pw);var sel=document.getElementById('wsel');if(sel&&ks.length){sel.innerHTML=ks.map(function(w){return '<option value="'+esc(w)+'">'+esc(w)+' ('+(pw[w].filter(function(x){return x.mule;}).length)+' Proxy)</option>';}).join('');renderWorld();}})();
 </script></body></html>`;
 
 export default {
