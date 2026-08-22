@@ -43,6 +43,20 @@ Ausgabe in `reports/`:
 - `report-<welt>-<datum>.json` — maschinenlesbar
 - `snapshots/player-<welt>-<datum>.txt` — Tages-Snapshot (für spätere Wachstumsanalyse)
 
+## Cross-Welt-Erkennung (stärkstes Signal)
+
+Spieler-IDs sind **welt-übergreifend gleich** (globale Accounts). Tritt dieselbe Main←Feeder-Beziehung in **mehreren Welten** auf, ist Zufall praktisch ausgeschlossen = klares Pushing.
+
+```bash
+node crossworld.js de250 de251 de252 de253 de254 de255 de256 de257
+```
+Ohne Argumente wird ein Standardbereich gescannt. Erzeugt eine **professionelle Beweis-Website** unter `site/`:
+- `site/index.html` — Übersicht, gepushte Mains, Cross-Welt-Beziehungen, Filter
+- `site/methodik.html` — Methodik, Datenquellen, Grenzen
+- `site/data.json` — maschinenlesbar
+
+> **Nicht öffentlich posten.** Die Website enthält echte Spielernamen auf Verdachtsbasis. Sie ist zum **direkten Weitergeben an InnoGames** gedacht — nicht zum öffentlichen Anprangern (Persönlichkeitsrecht/üble Nachrede). Deshalb ist `site/` bewusst aus dem Repo ausgeschlossen.
+
 ## Grenzen (ehrlich)
 
 - **Verdacht ≠ Beweis.** Stamm-interne Umstrukturierung oder Account-Übergaben können ähnlich aussehen.
