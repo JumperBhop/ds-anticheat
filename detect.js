@@ -21,6 +21,12 @@ const WORLD = process.argv[2] || 'de256';
 const BASE = `https://${WORLD}.die-staemme.de/map`;
 const OUT = path.join(__dirname, 'reports');
 
+// --- Farben (nur im echten Terminal) ---
+const TTY = process.stdout.isTTY;
+const C = TTY ? { r:'\x1b[0m',b:'\x1b[1m',red:'\x1b[91m',yel:'\x1b[93m',grn:'\x1b[92m',cyn:'\x1b[96m',gray:'\x1b[90m',gold:'\x1b[38;5;214m',mag:'\x1b[95m' }
+             : { r:'',b:'',red:'',yel:'',grn:'',cyn:'',gray:'',gold:'',mag:'' };
+const sev = s => s>=35?C.red : s>=20?C.yel : C.gray;
+
 const MIN_FLOW = Number(process.env.MIN_FLOW || 3);
 const MAX_REV  = Number(process.env.MAX_REV  || 0);
 const CONC     = Number(process.env.CONC     || 0.75);
@@ -50,12 +56,12 @@ function loadGrowth(){
 }
 
 (async function main(){
-  console.log('\n'+BANNER+'\n');
-  console.log(`[Welt ${WORLD}] lade oeffentliche Daten ...`);
+  console.log('\n'+C.gold+C.b+BANNER+C.r+'\n');
+  console.log(C.cyn+`[Welt ${WORLD}]`+C.r+' lade oeffentliche Daten ...');
   const [pTxt,cTxt,aTxt,dTxt] = await Promise.all([get('player.txt'),get('conquer.txt'),get('kill_att.txt'),get('kill_def.txt').catch(()=> '')]);
   const players=parsePlayers(pTxt), oda=parseKills(aTxt), odd=parseKills(dTxt);
   let conquers=parseConquers(cTxt);
-  console.log(`  ${Object.keys(players).length} Spieler, ${conquers.length} Adelungen`);
+  console.log(`  ${C.b}${Object.keys(players).length}${C.r} Spieler, ${C.b}${conquers.length}${C.r} Adelungen`);
   if(DAYS>0){ const cut=Math.floor(Date.now()/1000)-DAYS*86400; conquers=conquers.filter(c=>c.ts>=cut); console.log(`  Zeitfilter ${DAYS}d -> ${conquers.length} Adelungen`); }
 
   const real = conquers.filter(c=>c.old&&c.old!=='0'&&c.nw&&c.nw!=='0'&&c.nw!==c.old);
@@ -133,9 +139,12 @@ function loadGrowth(){
   fs.mkdirSync(path.join(OUT,'snapshots'),{recursive:true});
   fs.writeFileSync(path.join(OUT,'snapshots',`player-${WORLD}-${stamp}.txt`),pTxt);
 
-  console.log(`\n=== Ergebnis ===`);
-  console.log(`Verdaechtige Mains: ${mains.length} · verdaechtige Paare: ${pairs.length}${growth?` · Wachstum aktiv (${Math.round(growth.days)}d Historie)`:' · (Wachstum: noch keine Historie)'}`);
-  console.log(`\nTop 10 verdaechtige Mains:`);
-  report.topMains.slice(0,10).forEach(m=>console.log(`  [${m.score}] ${m.main} <- ${m.muleFeeders} Mule-Feeder, ${m.villagesReceived} Doerfer ${m.reasons.length?'('+m.reasons.join('; ')+')':''}`));
-  console.log(`\nReports: ${OUT}`);
+  console.log(`\n${C.b}${C.gold}=== Ergebnis ===${C.r}`);
+  console.log(`Verdaechtige Mains: ${C.red}${C.b}${mains.length}${C.r} · verdaechtige Paare: ${C.yel}${pairs.length}${C.r}${growth?` · ${C.grn}Wachstum aktiv (${Math.round(growth.days)}d)${C.r}`:` · ${C.gray}(Wachstum: noch keine Historie)${C.r}`}`);
+  console.log(`\n${C.b}Top 10 verdaechtige Mains:${C.r}`);
+  report.topMains.slice(0,10).forEach(m=>{
+    console.log(`  ${sev(m.score)}${C.b}[${m.score}]${C.r} ${C.b}${m.main}${C.r} ${C.gray}<-${C.r} ${C.red}${m.muleFeeders} Mule-Feeder${C.r}, ${C.yel}${m.villagesReceived} Doerfer${C.r}`);
+    if(m.reasons.length) console.log(`      ${C.gray}${m.reasons.join(' · ')}${C.r}`);
+  });
+  console.log(`\n${C.cyn}Reports:${C.r} ${OUT}`);
 })().catch(e=>{ console.error('Fehler:', e.message); process.exit(1); });
