@@ -1,130 +1,141 @@
 #!/usr/bin/env node
 // ============================================================
-// DS Anti-Cheat — Push-/Proxy-Erkennung aus OEFFENTLICHEN Weltdaten
-// Nutzt nur die offiziellen Datei-Exporte (map/*.txt). Keine Server-Interna,
-// keine privaten Daten. Zweck: verdaechtige Feeder-/Multiaccount-Muster
-// markieren, damit sie an InnoGames gemeldet werden koennen.
-//
-// Kernidee: Ein "Mule"/Proxy adelt seine Doerfer einseitig an EINEN Main,
-// ist dabei aber kampf-inaktiv (niedrige ODA). Ein normales Kriegsopfer
-// verliert zwar auch einseitig Doerfer, hat aber hohe ODA (hat gekaempft).
-// Genau daran unterscheiden wir Push von Krieg.
+// DS Anti-Cheat — Push-/Multiaccount-Erkennung aus OEFFENTLICHEN Weltdaten
+// Nutzt nur die offiziellen map/*.txt-Exporte. Keine Server-Interna.
+// Zweck: Verdachtsmuster zum Melden an InnoGames. Verdacht, kein Beweis.
 // ============================================================
 'use strict';
 const fs = require('fs');
 const path = require('path');
 
+const BANNER = [
+  ' ____   ___  _   _  ____ ______ _ _ _',
+  '| __ ) / _ \\| \\ | |/ ___|__  (_) | | | __ _',
+  '|  _ \\| | | |  \\| | |  _  / /| | | | |/ _` |',
+  '| |_) | |_| | |\\  | |_| |/ /_| | | | | (_| |',
+  '|____/ \\___/|_| \\_|\\____/____|_|_|_|_|\\__,_|',
+  '           B O N G Zilla  -  Anti-Cheat'
+].join('\n');
+
 const WORLD = process.argv[2] || 'de256';
 const BASE = `https://${WORLD}.die-staemme.de/map`;
 const OUT = path.join(__dirname, 'reports');
 
-// --- Schwellen (konservativ; per ENV anpassbar) ---
-const MIN_FLOW  = Number(process.env.MIN_FLOW  || 3);     // min. einseitig geadelte Doerfer
-const MAX_REV   = Number(process.env.MAX_REV   || 0);     // erlaubte Gegen-Adelungen
-const CONC      = Number(process.env.CONC      || 0.75);  // Anteil der Verluste an EINEN Main
-const ODA_MULE  = Number(process.env.ODA_MULE  || 20000); // darunter gilt Feeder als kampf-inaktiv
-const DAYS      = Number(process.env.DAYS || 0);          // 0 = alle, sonst nur letzte N Tage
+const MIN_FLOW = Number(process.env.MIN_FLOW || 3);
+const MAX_REV  = Number(process.env.MAX_REV  || 0);
+const CONC     = Number(process.env.CONC     || 0.75);
+const ODA_MULE = Number(process.env.ODA_MULE || 20000);
+const DAYS     = Number(process.env.DAYS || 0);
+const BURST_WIN= 3600; // Sekunden-Fenster fuer "Adel-Burst"
 
 function dec(s){ try { return decodeURIComponent(s.replace(/\+/g,' ')); } catch(e){ return s; } }
-async function get(file){ const r = await fetch(`${BASE}/${file}`); if(!r.ok) throw new Error(`${file}: HTTP ${r.status}`); return await r.text(); }
+async function get(file){ const r=await fetch(`${BASE}/${file}`); if(!r.ok) throw new Error(`${file}: HTTP ${r.status}`); return await r.text(); }
 function esc(s){ return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
-
 function parsePlayers(txt){ const m={}; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [id,name,ally,v,p,r]=l.split(','); m[id]={id,name:dec(name||''),ally,villages:+v||0,points:+p||0,rank:+r||0}; }); return m; }
 function parseConquers(txt){ const o=[]; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [village,ts,nw,old]=l.split(','); o.push({village,ts:+ts||0,nw,old}); }); return o; }
 function parseKills(txt){ const m={}; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [,id,k]=l.split(','); if(id)m[id]=+k||0; }); return m; }
+function unionFind(){ const p={}; function find(x){ if(p[x]===undefined)p[x]=x; while(p[x]!==x){p[x]=p[p[x]];x=p[x];} return x; } return {find,join:(a,b)=>{p[find(a)]=find(b);}}; }
+function maxInWindow(sorted,win){ let best=1,j=0; for(let i=0;i<sorted.length;i++){ while(sorted[i]-sorted[j]>win)j++; best=Math.max(best,i-j+1); } return best; }
 
-function unionFind(){ const p={}; function find(x){ if(p[x]===undefined)p[x]=x; while(p[x]!==x){p[x]=p[p[x]];x=p[x];} return x; } function join(a,b){ p[find(a)]=find(b); } return {find,join}; }
+function loadGrowth(){
+  // optionale Wachstumsanalyse aus frueheren Snapshots
+  const dir = path.join(OUT,'snapshots');
+  if(!fs.existsSync(dir)) return null;
+  const files = fs.readdirSync(dir).filter(f=>f.startsWith(`player-${WORLD}-`)).sort();
+  if(files.length<2) return null;
+  const first = parsePlayers(fs.readFileSync(path.join(dir,files[0]),'utf8'));
+  const dFirst = files[0].slice(-14,-4), dLast = files[files.length-1].slice(-14,-4);
+  const days = Math.max(1,(Date.parse(dLast)-Date.parse(dFirst))/86400000);
+  return { first, days };
+}
 
 (async function main(){
-  console.log(`[DS Anti-Cheat] Welt ${WORLD} — lade oeffentliche Daten ...`);
-  const [pTxt,cTxt,aTxt] = await Promise.all([get('player.txt'), get('conquer.txt'), get('kill_att.txt')]);
-  const players = parsePlayers(pTxt);
-  const oda = parseKills(aTxt);
-  let conquers = parseConquers(cTxt);
-  console.log(`  ${Object.keys(players).length} Spieler, ${conquers.length} Adelungen, ODA fuer ${Object.keys(oda).length} Spieler`);
+  console.log('\n'+BANNER+'\n');
+  console.log(`[Welt ${WORLD}] lade oeffentliche Daten ...`);
+  const [pTxt,cTxt,aTxt,dTxt] = await Promise.all([get('player.txt'),get('conquer.txt'),get('kill_att.txt'),get('kill_def.txt').catch(()=> '')]);
+  const players=parsePlayers(pTxt), oda=parseKills(aTxt), odd=parseKills(dTxt);
+  let conquers=parseConquers(cTxt);
+  console.log(`  ${Object.keys(players).length} Spieler, ${conquers.length} Adelungen`);
+  if(DAYS>0){ const cut=Math.floor(Date.now()/1000)-DAYS*86400; conquers=conquers.filter(c=>c.ts>=cut); console.log(`  Zeitfilter ${DAYS}d -> ${conquers.length} Adelungen`); }
 
-  if(DAYS>0){ const cut=Math.floor(Date.now()/1000)-DAYS*86400; conquers=conquers.filter(c=>c.ts>=cut); console.log(`  gefiltert auf letzte ${DAYS} Tage: ${conquers.length} Adelungen`); }
+  const real = conquers.filter(c=>c.old&&c.old!=='0'&&c.nw&&c.nw!=='0'&&c.nw!==c.old);
+  const gained={}, tsByPair={};
+  real.forEach(c=>{ (gained[c.nw] ||= {})[c.old]=(gained[c.nw][c.old]||0)+1; (tsByPair[c.nw+'|'+c.old] ||= []).push(c.ts); });
 
-  const real = conquers.filter(c=>c.old && c.old!=='0' && c.nw && c.nw!=='0' && c.nw!==c.old);
+  const lostBy={};
+  for(const A in gained) for(const B in gained[A]){ (lostBy[B] ||= {})[A]=gained[A][B]; }
 
-  // gained[A][B] = wie oft A ein Dorf von B genommen hat
-  const gained = {};
-  real.forEach(c=>{ (gained[c.nw] ||= {})[c.old] = (gained[c.nw][c.old]||0)+1; });
+  const growth = loadGrowth();
+  const gRate = id => { if(!growth||!growth.first[id]||!players[id]) return null; return Math.round((players[id].points-growth.first[id].points)/growth.days); };
 
-  // Pro Feeder B: gesamte Verluste, Haupt-Beguenstigter, Konzentration
-  const lostBy = {}; // B -> {A:count}
-  for(const A in gained) for(const B in gained[A]){ (lostBy[B] ||= {})[A] = gained[A][B]; }
-
-  const pairs = [];
+  // --- Feeder->Main-Paare mit Signalen ---
+  const pairs=[];
   for(const B in lostBy){
-    const map = lostBy[B];
-    let topA=null, topC=0, total=0;
-    for(const A in map){ total+=map[A]; if(map[A]>topC){topC=map[A]; topA=A;} }
-    if(topC < MIN_FLOW) continue;
-    const reverse = (gained[B] && gained[B][topA]) || 0;
-    if(reverse > MAX_REV) continue;
-    const conc = topC/total;
-    if(conc < CONC) continue;
-    const odaB = oda[B]||0;
-    const mule = odaB < ODA_MULE;                 // kampf-inaktiv => Push-Verdacht
-    // Score: einseitige Doerfer * Konzentration, verdoppelt wenn Feeder kaum kaempft
-    const score = Math.round(topC * conc * (mule?2:1) * 10)/10;
-    pairs.push({ beneficiary:topA, feeder:B, count:topC, total, conc, reverse, odaB, mule, score });
+    const map=lostBy[B]; let topA=null,topC=0,total=0;
+    for(const A in map){ total+=map[A]; if(map[A]>topC){topC=map[A];topA=A;} }
+    if(topC<MIN_FLOW) continue;
+    const reverse=(gained[B]&&gained[B][topA])||0; if(reverse>MAX_REV) continue;
+    const conc=topC/total; if(conc<CONC) continue;
+    const odaB=oda[B]||0, mule=odaB<ODA_MULE, deleted=!players[B];
+    const ts=(tsByPair[topA+'|'+B]||[]).slice().sort((a,b)=>a-b);
+    const burst=maxInWindow(ts,BURST_WIN);
+    const spanD=ts.length>1?Math.round((ts[ts.length-1]-ts[0])/86400*10)/10:0;
+    const score=Math.round((topC*conc*(mule?2:1)+(deleted?2:0)+(burst>=3?2:0))*10)/10;
+    pairs.push({beneficiary:topA,feeder:B,count:topC,total,conc,reverse,odaB,oddB:odd[B]||0,mule,deleted,burst,spanD,score});
   }
-  pairs.sort((x,y)=>y.score-x.score);
+  pairs.sort((a,b)=>b.score-a.score);
 
-  // Cluster nur aus den (nach Filter) verdaechtigen Paaren
-  const uf = unionFind();
-  pairs.forEach(p=>uf.join(p.beneficiary,p.feeder));
-  const clusters={};
-  pairs.forEach(p=>[p.beneficiary,p.feeder].forEach(id=>{ const r=uf.find(id); (clusters[r] ||= new Set()).add(id); }));
+  // --- Aggregation pro MAIN (das ueberzeugendste Signal fuer Inno) ---
+  const byMain={};
+  pairs.forEach(p=>{ (byMain[p.beneficiary] ||= []).push(p); });
+  const mains = Object.keys(byMain).map(A=>{
+    const list=byMain[A];
+    const muleFeeders=list.filter(p=>p.mule);
+    const deletedFeeders=list.filter(p=>p.deleted);
+    const fedTotal=list.reduce((t,p)=>t+p.count,0);
+    const reasons=[];
+    if(muleFeeders.length>=2) reasons.push(`${muleFeeders.length} kampf-inaktive Feeder`);
+    if(deletedFeeders.length>=1) reasons.push(`${deletedFeeders.length} Feeder-Account(s) geloescht`);
+    if(list.some(p=>p.burst>=3)) reasons.push('Adel-Burst (mehrere Doerfer in <1h)');
+    if(list.some(p=>p.conc>=0.99)) reasons.push('Feeder gab 100% an diesen Main');
+    const g=gRate(A); if(g!=null&&g>0) reasons.push(`Wachstum ~${g.toLocaleString('de-DE')} Pkt/Tag`);
+    const mScore=Math.round((list.reduce((t,p)=>t+p.score,0)+muleFeeders.length*3)*10)/10;
+    return { id:A, feeders:list.length, muleFeeders:muleFeeders.length, deletedFeeders:deletedFeeders.length, fedTotal, reasons, score:mScore };
+  }).filter(m=>m.muleFeeders>=1).sort((a,b)=>b.score-a.score);
 
-  const nm = id => (players[id]?players[id].name:'??')+` (#${id})`;
-  const pts = id => players[id]?players[id].points:0;
+  const nm=id=>(players[id]?players[id].name:'[geloescht]')+` (#${id})`;
+  const pts=id=>players[id]?players[id].points:0;
 
   fs.mkdirSync(OUT,{recursive:true});
-  const stamp = new Date().toISOString().slice(0,10);
-  const report = {
-    world:WORLD, generated:new Date().toISOString(),
-    method:'Einseitige, konzentrierte Adelungen an EINEN Main + Feeder kampf-inaktiv (niedrige ODA). Trennt Push/Multiacc von normalem Krieg.',
+  const stamp=new Date().toISOString().slice(0,10);
+  const report={ world:WORLD, generated:new Date().toISOString(),
+    method:'Mains, die von mehreren kampf-inaktiven Accounts einseitig gefuettert werden (Push/Multiacc). Trennung von Krieg via ODA. Zusatzsignale: geloeschte Feeder, Adel-Bursts, Wachstum.',
     thresholds:{MIN_FLOW,MAX_REV,CONC,ODA_MULE,DAYS},
-    suspiciousPairs: pairs.slice(0,300).map(p=>({
-      beneficiary:nm(p.beneficiary), beneficiaryPoints:pts(p.beneficiary),
-      feeder:nm(p.feeder), feederPoints:pts(p.feeder),
-      villagesFed:p.count, concentration:Math.round(p.conc*100)+'%',
-      feederODA:p.odaB, feederKampfInaktiv:p.mule, score:p.score
-    })),
-    clusters: Object.values(clusters).filter(s=>s.size>=2).map(s=>{ const ids=[...s].sort((a,b)=>pts(b)-pts(a)); return {size:ids.length,totalPoints:ids.reduce((t,i)=>t+pts(i),0),members:ids.map(nm)}; }).sort((a,b)=>b.size-a.size)
+    topMains:mains.slice(0,150).map(m=>({main:nm(m.id),points:pts(m.id),muleFeeders:m.muleFeeders,feedersTotal:m.feeders,deletedFeeders:m.deletedFeeders,villagesReceived:m.fedTotal,score:m.score,reasons:m.reasons})),
+    suspiciousPairs:pairs.slice(0,300).map(p=>({beneficiary:nm(p.beneficiary),feeder:nm(p.feeder),villagesFed:p.count,concentration:Math.round(p.conc*100)+'%',feederODA:p.odaB,feederKampfInaktiv:p.mule,feederGeloescht:p.deleted,burst1h:p.burst,spanTage:p.spanD,score:p.score}))
   };
-  fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.json`), JSON.stringify(report,null,2));
+  fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.json`),JSON.stringify(report,null,2));
 
-  const rows = report.suspiciousPairs.map(p=>{
-    const flag = p.feederKampfInaktiv ? '<span style="color:#a00;font-weight:bold">Mule-Verdacht</span>' : '<span style="color:#888">kriegsaehnlich</span>';
-    return `<tr><td>${p.score}</td><td>${esc(p.beneficiary)}</td><td>${p.beneficiaryPoints.toLocaleString('de-DE')}</td>`+
-      `<td>${esc(p.feeder)}</td><td>${p.feederPoints.toLocaleString('de-DE')}</td>`+
-      `<td style="text-align:center">${p.villagesFed}</td><td style="text-align:center">${p.concentration}</td>`+
-      `<td style="text-align:center">${p.feederODA.toLocaleString('de-DE')}</td><td>${flag}</td></tr>`;
-  }).join('');
-  const cl = report.clusters.map(c=>`<li><b>${c.size} Accounts</b> (${c.totalPoints.toLocaleString('de-DE')} Pkt): ${c.members.map(esc).join(' · ')}</li>`).join('');
-  const html = `<!doctype html><meta charset="utf-8"><title>DS Anti-Cheat ${WORLD}</title>`+
-    `<style>body{font:14px/1.5 sans-serif;max-width:1100px;margin:24px auto;padding:0 12px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #ccc;padding:5px 8px;font-size:13px}th{background:#eee;text-align:left}h1,h2{color:#7a1010}code{background:#eee;padding:1px 4px}</style>`+
-    `<h1>DS Anti-Cheat — ${WORLD}</h1>`+
-    `<p>Erstellt: ${report.generated}</p>`+
-    `<p><b>Methode:</b> ${esc(report.method)} Schwellen: ${MIN_FLOW}+ Doerfer, Konzentration ≥${Math.round(CONC*100)}%, Gegenrichtung ≤${MAX_REV}, „kampf-inaktiv" = ODA &lt; ${ODA_MULE.toLocaleString('de-DE')}.</p>`+
-    `<p><b>Wichtig:</b> Das sind <i>Verdachtsmuster</i> zur Pruefung/Meldung, kein Beweis. „Mule-Verdacht" = Feeder gibt einseitig an einen Main ab UND kaempft kaum — typisch fuer Push/Proxy. „kriegsaehnlich" = koennte normaler Krieg sein.</p>`+
-    `<h2>Verdaechtige Cluster (${report.clusters.length})</h2><ul>${cl||'<li>keine</li>'}</ul>`+
+  const mainRows=report.topMains.map(m=>`<tr><td>${m.score}</td><td>${esc(m.main)}</td><td>${m.points.toLocaleString('de-DE')}</td><td style="text-align:center">${m.muleFeeders}</td><td style="text-align:center">${m.deletedFeeders}</td><td style="text-align:center">${m.villagesReceived}</td><td>${m.reasons.map(esc).join('; ')}</td></tr>`).join('');
+  const pairRows=report.suspiciousPairs.map(p=>{ const f=p.feederKampfInaktiv?'<b style="color:#a00">Mule-Verdacht</b>':'<span style="color:#888">kriegsaehnlich</span>'; const del=p.feederGeloescht?' · <span style="color:#a00">geloescht</span>':''; return `<tr><td>${p.score}</td><td>${esc(p.beneficiary)}</td><td>${esc(p.feeder)}</td><td style="text-align:center">${p.villagesFed}</td><td style="text-align:center">${p.concentration}</td><td style="text-align:center">${p.feederODA.toLocaleString('de-DE')}</td><td style="text-align:center">${p.burst1h}</td><td>${f}${del}</td></tr>`; }).join('');
+  const html=`<!doctype html><meta charset="utf-8"><title>DS Anti-Cheat ${WORLD}</title>`+
+    `<style>body{font:14px/1.5 sans-serif;max-width:1150px;margin:20px auto;padding:0 12px}table{border-collapse:collapse;width:100%;margin-bottom:24px}td,th{border:1px solid #ccc;padding:5px 8px;font-size:13px}th{background:#eee;text-align:left}h1,h2{color:#7a1010}pre{background:#111;color:#c9a84c;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.2}code{background:#eee;padding:1px 4px}</style>`+
+    `<pre>${esc(BANNER)}</pre>`+
+    `<h1>DS Anti-Cheat — ${WORLD}</h1><p>Erstellt: ${report.generated}</p>`+
+    `<p><b>Methode:</b> ${esc(report.method)}</p>`+
+    `<p><b>Verdacht, kein Beweis.</b> Die IP-/Geraete-/Zahlungs-Ebene kann nur InnoGames pruefen — dies ist die oeffentlich sichtbare Vorstufe, nach Score priorisiert.</p>`+
+    `<h2>Top verdaechtige Mains (${report.topMains.length})</h2>`+
+    `<table><tr><th>Score</th><th>Main</th><th>Punkte</th><th>Mule-Feeder</th><th>Feeder geloescht</th><th>Doerfer erhalten</th><th>Gruende</th></tr>${mainRows}</table>`+
     `<h2>Verdaechtige Feeder-Paare (Top ${report.suspiciousPairs.length})</h2>`+
-    `<table><tr><th>Score</th><th>Beguenstigter</th><th>Pkt</th><th>Feeder</th><th>Pkt</th><th>Doerfer</th><th>Konz.</th><th>Feeder-ODA</th><th>Bewertung</th></tr>${rows}</table>`;
-  fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.html`), html);
+    `<table><tr><th>Score</th><th>Main</th><th>Feeder</th><th>Doerfer</th><th>Konz.</th><th>Feeder-ODA</th><th>Burst/1h</th><th>Bewertung</th></tr>${pairRows}</table>`;
+  fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.html`),html);
 
   fs.mkdirSync(path.join(OUT,'snapshots'),{recursive:true});
-  fs.writeFileSync(path.join(OUT,'snapshots',`player-${WORLD}-${stamp}.txt`), pTxt);
+  fs.writeFileSync(path.join(OUT,'snapshots',`player-${WORLD}-${stamp}.txt`),pTxt);
 
-  const mules = pairs.filter(p=>p.mule);
   console.log(`\n=== Ergebnis ===`);
-  console.log(`Verdaechtige Paare gesamt: ${pairs.length}  (davon Mule-Verdacht: ${mules.length}, kriegsaehnlich: ${pairs.length-mules.length})`);
-  console.log(`Cluster (>=2): ${report.clusters.length}`);
-  console.log(`\nTop 10 Mule-Verdacht (Feeder kaempft kaum, adelt einseitig einen Main):`);
-  mules.slice(0,10).forEach(p=>console.log(`  ${nm(p.feeder)} ODA=${p.odaB}  --${p.count} Doerfer (${Math.round(p.conc*100)}%)-->  ${nm(p.beneficiary)}`));
+  console.log(`Verdaechtige Mains: ${mains.length} · verdaechtige Paare: ${pairs.length}${growth?` · Wachstum aktiv (${Math.round(growth.days)}d Historie)`:' · (Wachstum: noch keine Historie)'}`);
+  console.log(`\nTop 10 verdaechtige Mains:`);
+  report.topMains.slice(0,10).forEach(m=>console.log(`  [${m.score}] ${m.main} <- ${m.muleFeeders} Mule-Feeder, ${m.villagesReceived} Doerfer ${m.reasons.length?'('+m.reasons.join('; ')+')':''}`));
   console.log(`\nReports: ${OUT}`);
 })().catch(e=>{ console.error('Fehler:', e.message); process.exit(1); });
