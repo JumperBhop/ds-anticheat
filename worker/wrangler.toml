@@ -1,0 +1,7 @@
+name = "ds-anticheat"
+main = "src/index.js"
+compatibility_date = "2026-07-01"
+
+[[kv_namespaces]]
+binding = "AC"
+id = "0e869eea34434aebb2c96a0bd32214b3"

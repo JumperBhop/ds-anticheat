@@ -110,7 +110,24 @@ function asciiSpark(series){ if(series.length<2)return'(keine Historie)'; const 
   // --- Website ---
   fs.mkdirSync(OUT,{recursive:true});
   const gen=new Date().toISOString();
-  fs.writeFileSync(path.join(OUT,'data.json'), JSON.stringify({generated:gen,worldsScanned:scanned,cases:cases.slice(0,500).map(c=>({main:nm(c.main),feeder:nm(c.feeder),worlds:c.worldsList,villages:c.villages,perWorld:c.perWorld,feederKampfInaktiv:c.mule})),mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))},null,2));
+  const casesOut = cases.slice(0,500).map((c,idx)=>{
+    const g={};
+    if(idx<GRAPH_CASES) c.worldsList.forEach(w=>{ g[w]={main:graphs[w+'|'+c.main]||[], feeder:graphs[w+'|'+c.feeder]||[]}; });
+    return {main:nm(c.main),feeder:nm(c.feeder),worlds:c.worldsList,villages:c.villages,perWorld:c.perWorld,feederKampfInaktiv:c.mule,graphs:g};
+  });
+  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
+  const payloadStr=JSON.stringify(payload);
+  fs.writeFileSync(path.join(OUT,'data.json'), JSON.stringify(payload,null,2));
+
+  // --- Upload zum gehosteten Dashboard ---
+  const AC_URL=process.env.AC_URL||'https://ds-anticheat.jumperjim112.workers.dev';
+  let AC_KEY=process.env.AC_KEY||'';
+  if(!AC_KEY){ try{ AC_KEY=fs.readFileSync(path.join(__dirname,'worker','.upload-key.txt'),'utf8').trim(); }catch(e){} }
+  if(AC_KEY){
+    try{ const r=await fetch(AC_URL+'/upload?key='+encodeURIComponent(AC_KEY),{method:'POST',body:payloadStr});
+      console.log(`\n${C.cyn}Upload:${C.r} ${r.ok?C.grn+'ok -> '+AC_URL+C.r:C.red+'FEHLER '+r.status+C.r}`); }
+    catch(e){ console.log(`${C.red}Upload-Fehler:${C.r} `+e.message); }
+  } else { console.log(`\n${C.gray}(kein Upload-Key — nur lokal gespeichert)${C.r}`); }
 
   const css=`*{box-sizing:border-box}body{font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;margin:0;background:#12100c;color:#e9e2d0}
   header{background:linear-gradient(180deg,#1c1710,#12100c);border-bottom:2px solid #9b7a1a;padding:28px 20px;text-align:center}

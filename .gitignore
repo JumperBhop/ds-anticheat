@@ -1,3 +1,7 @@
 node_modules/
 reports/
 site/
+worker/node_modules/
+worker/.wrangler/
+worker/.upload-key.txt
+worker/.dash-token.txt
