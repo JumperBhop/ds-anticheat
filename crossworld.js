@@ -65,15 +65,42 @@ function svgLine(series,w=200,h=44){
 }
 function asciiSpark(series){ if(series.length<2)return'(keine Historie)'; const b='▁▂▃▄▅▆▇█', ys=series.map(p=>p.points), mn=Math.min(...ys), mx=Math.max(...ys), r=(mx-mn)||1; return ys.map(v=>b[Math.min(7,Math.floor((v-mn)/r*7.999))]).join(''); }
 
+// Main-zentriert: faengt auch VERTEILTES Pushing (viele Wegwerf-Accounts geben je 1-2 Doerfer).
+// Ein Main, der von mehreren kampf-inaktiven/geloeschten Accounts Doerfer bekommt, ist verdaechtig.
+function analyzeMains(d, ODA_MULE, MIN_FLOW){
+  const real=d.conquers.filter(c=>c.old&&c.old!=='0'&&c.nw&&c.nw!=='0'&&c.nw!==c.old);
+  const byMain={};
+  real.forEach(c=>{ (byMain[c.nw] ||= {}); (byMain[c.nw][c.old] ||= []).push(c.village); });
+  const out=[];
+  for(const main in byMain){
+    const feeders=[]; let susV=0,nDel=0;
+    for(const f in byMain[main]){
+      const vids=byMain[main][f], foda=d.oda[f]||0, del=!d.players[f], sus=(foda<ODA_MULE)||del;
+      if(sus){ susV+=vids.length; if(del)nDel++; }
+      feeders.push({id:f,villages:vids,oda:foda,deleted:del,sus});
+    }
+    const susFeeders=feeders.filter(f=>f.sus);
+    const maxSingle=feeders.reduce((m,f)=>Math.max(m,f.villages.length),0);
+    if(susV>=MIN_FLOW && (susFeeders.length>=2 || maxSingle>=3)){
+      const mainOda=d.oda[main]||0;
+      out.push({ main, mainOda, susFeeders:susFeeders.length, nDel, susV,
+        feeders:susFeeders.sort((a,b)=>b.villages.length-a.villages.length),
+        score: susV + susFeeders.length*3 + nDel*2 + (mainOda<ODA_MULE?5:0) });
+    }
+  }
+  out.sort((a,b)=>b.score-a.score);
+  return out;
+}
+
 (async function main(){
   console.log('\n'+C.gold+C.b+BANNER+C.r+'\n');
   console.log(`Scanne ${C.b}${WORLDS.length}${C.r} Welten (2er-Schritt): ${WORLDS[0]} ... ${WORLDS[WORLDS.length-1]}\n`);
 
-  const names={}, points={}, rel={}, scanned=[], sampleP={}, rawByWorld={};
+  const names={}, points={}, rel={}, scanned=[], sampleP={}, rawByWorld={}, worldData={};
   for(const w of WORLDS){
     process.stdout.write(`  ${w} ... `);
     let data; try{ data=await loadWorld(w); }catch(e){ console.log(C.gray+'nicht erreichbar'+C.r); continue; }
-    scanned.push(w);
+    scanned.push(w); worldData[w]=data;
     for(const id in data.players){ names[id]=data.players[id].name; const p=data.players[id].points; if(!points[id]||p>points[id])points[id]=p; if(!sampleP[w])sampleP[w]=id; }
     const pp=pushPairs(data); rawByWorld[w]=pp;
     pp.forEach(p=>{
@@ -116,14 +143,32 @@ function asciiSpark(series){ if(series.length<2)return'(keine Historie)'; const 
     if(idx<GRAPH_CASES) c.worldsList.forEach(w=>{ g[w]={main:graphs[w+'|'+c.main]||[], feeder:graphs[w+'|'+c.feeder]||[]}; });
     return {main:nm(c.main),feeder:nm(c.feeder),worlds:c.worldsList,villages:c.villages,perWorld:c.perWorld,feederKampfInaktiv:c.mule,graphs:g};
   });
-  // Einzel-Welt-Verdaechtige (hier steckt die Masse der aktuellen Proxys)
-  const perWorldSuspects={};
-  scanned.forEach(w=>{
-    const arr=(rawByWorld[w]||[]).map(p=>({feeder:nm(p.feederId),main:nm(p.mainId),villages:p.count,oda:p.odaB,mule:p.mule,deleted:p.deleted,conc:Math.round(p.conc*100)}));
-    arr.sort((a,b)=> (b.mule-a.mule) || (b.villages-a.villages));
-    perWorldSuspects[w]=arr.slice(0,400);
-  });
-  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,perWorldSuspects,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
+  // Deleted-Namen via DS-Ultimate aufloesen (begrenzt), Dorf-Koordinaten aus village.txt
+  let nameLookups=0; const MAX_NAME=Number(process.env.MAX_NAME||400);
+  async function resolveName(w,id){
+    if(names[id]) return names[id];
+    if(nameLookups>=MAX_NAME) return '#'+id;
+    const wid=await duWorldId(w, sampleP[w]||id); if(!wid) return '#'+id;
+    nameLookups++;
+    try{ const t=await (await fetch(`https://ds-ultimate.de/api/${wid}/player/${id}/history`)).text(); const j=JSON.parse(t); const n=j.data&&j.data[0]&&j.data[0].name; await sleep(120); if(n){ names[id]=n; return n; } }catch(e){ await sleep(120); }
+    return '#'+id;
+  }
+  const coords=(w,vid)=>{ const v=worldData[w]&&worldData[w].villages[vid]; return v?(v.x+'|'+v.y):('Dorf '+vid); };
+
+  console.log(`\n${C.cyn}Analysiere Mains pro Welt + loese geloeschte Namen auf ...${C.r}`);
+  const perWorldMains={};
+  for(const w of scanned){
+    const arr=analyzeMains(worldData[w],20000,3).slice(0,150), out=[];
+    for(const m of arr){
+      const feeders=[];
+      for(const f of m.feeders){
+        feeders.push({ name: f.deleted? await resolveName(w,f.id) : (names[f.id]||('#'+f.id)), id:f.id, oda:f.oda, deleted:f.deleted, villages:f.villages.map(v=>coords(w,v)) });
+      }
+      out.push({ main:names[m.main]||('#'+m.main), mainId:m.main, mainOda:m.mainOda, susFeeders:m.susFeeders, nDel:m.nDel, susVillages:m.susV, feeders });
+    }
+    perWorldMains[w]=out;
+  }
+  const payload={generated:gen,worldsScanned:scanned,cases:casesOut,perWorldMains,mains:mains.slice(0,300).map(m=>({main:nm(m.main),crossWorldFeeders:m.feeders,worlds:m.worlds,villages:m.villages}))};
   const payloadStr=JSON.stringify(payload);
   fs.writeFileSync(path.join(OUT,'data.json'), JSON.stringify(payload,null,2));
 

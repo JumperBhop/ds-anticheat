@@ -11,11 +11,12 @@ async function getTxt(url){ const r = await fetch(url); if(!r.ok) throw new Erro
 function parsePlayers(txt){ const m={}; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [id,name,ally,v,p,r]=l.split(','); m[id]={id,name:dec(name),ally,villages:+v||0,points:+p||0,rank:+r||0}; }); return m; }
 function parseConquers(txt){ const o=[]; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [village,ts,nw,old]=l.split(','); o.push({village,ts:+ts||0,nw,old}); }); return o; }
 function parseKills(txt){ const m={}; txt.split('\n').forEach(l=>{ if(!l.trim())return; const [,id,k]=l.split(','); if(id)m[id]=+k||0; }); return m; }
+function parseVillages(txt){ const m={}; txt.split('\n').forEach(l=>{ if(!l.trim())return; const p=l.split(','); if(p[0])m[p[0]]={name:dec(p[1]||''),x:+p[2]||0,y:+p[3]||0}; }); return m; }
 
 async function loadWorld(world){
   const base = `https://${world}.die-staemme.de/map`;
-  const [p,c,a] = await Promise.all([ getTxt(`${base}/player.txt`), getTxt(`${base}/conquer.txt`), getTxt(`${base}/kill_att.txt`).catch(()=> '') ]);
-  return { world, players:parsePlayers(p), conquers:parseConquers(c), oda:parseKills(a) };
+  const [p,c,a,v] = await Promise.all([ getTxt(`${base}/player.txt`), getTxt(`${base}/conquer.txt`), getTxt(`${base}/kill_att.txt`).catch(()=> ''), getTxt(`${base}/village.txt`).catch(()=> '') ]);
+  return { world, players:parsePlayers(p), conquers:parseConquers(c), oda:parseKills(a), villages:parseVillages(v) };
 }
 
 // Liefert verdaechtige Feeder->Main-Paare einer Welt (mit IDs, damit cross-welt matchbar)
