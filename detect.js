@@ -123,7 +123,7 @@ function loadGrowth(){
   fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.json`),JSON.stringify(report,null,2));
 
   const mainRows=report.topMains.map(m=>`<tr><td>${m.score}</td><td>${esc(m.main)}</td><td>${m.points.toLocaleString('de-DE')}</td><td style="text-align:center">${m.muleFeeders}</td><td style="text-align:center">${m.deletedFeeders}</td><td style="text-align:center">${m.villagesReceived}</td><td>${m.reasons.map(esc).join('; ')}</td></tr>`).join('');
-  const pairRows=report.suspiciousPairs.map(p=>{ const f=p.feederKampfInaktiv?'<b style="color:#a00">Mule-Verdacht</b>':'<span style="color:#888">kriegsaehnlich</span>'; const del=p.feederGeloescht?' · <span style="color:#a00">geloescht</span>':''; return `<tr><td>${p.score}</td><td>${esc(p.beneficiary)}</td><td>${esc(p.feeder)}</td><td style="text-align:center">${p.villagesFed}</td><td style="text-align:center">${p.concentration}</td><td style="text-align:center">${p.feederODA.toLocaleString('de-DE')}</td><td style="text-align:center">${p.burst1h}</td><td>${f}${del}</td></tr>`; }).join('');
+  const pairRows=report.suspiciousPairs.map(p=>{ const f=p.feederKampfInaktiv?'<b style="color:#a00">Proxy-Verdacht</b>':'<span style="color:#888">kriegsaehnlich</span>'; const del=p.feederGeloescht?' · <span style="color:#a00">geloescht</span>':''; return `<tr><td>${p.score}</td><td>${esc(p.beneficiary)}</td><td>${esc(p.feeder)}</td><td style="text-align:center">${p.villagesFed}</td><td style="text-align:center">${p.concentration}</td><td style="text-align:center">${p.feederODA.toLocaleString('de-DE')}</td><td style="text-align:center">${p.burst1h}</td><td>${f}${del}</td></tr>`; }).join('');
   const html=`<!doctype html><meta charset="utf-8"><title>DS Anti-Cheat ${WORLD}</title>`+
     `<style>body{font:14px/1.5 sans-serif;max-width:1150px;margin:20px auto;padding:0 12px}table{border-collapse:collapse;width:100%;margin-bottom:24px}td,th{border:1px solid #ccc;padding:5px 8px;font-size:13px}th{background:#eee;text-align:left}h1,h2{color:#7a1010}pre{background:#111;color:#c9a84c;padding:12px;border-radius:6px;overflow:auto;font-size:12px;line-height:1.2}code{background:#eee;padding:1px 4px}</style>`+
     `<pre>${esc(BANNER)}</pre>`+
@@ -131,7 +131,7 @@ function loadGrowth(){
     `<p><b>Methode:</b> ${esc(report.method)}</p>`+
     `<p><b>Verdacht, kein Beweis.</b> Die IP-/Geraete-/Zahlungs-Ebene kann nur InnoGames pruefen — dies ist die oeffentlich sichtbare Vorstufe, nach Score priorisiert.</p>`+
     `<h2>Top verdaechtige Mains (${report.topMains.length})</h2>`+
-    `<table><tr><th>Score</th><th>Main</th><th>Punkte</th><th>Mule-Feeder</th><th>Feeder geloescht</th><th>Doerfer erhalten</th><th>Gruende</th></tr>${mainRows}</table>`+
+    `<table><tr><th>Score</th><th>Main</th><th>Punkte</th><th>Proxy-Feeder</th><th>Feeder geloescht</th><th>Doerfer erhalten</th><th>Gruende</th></tr>${mainRows}</table>`+
     `<h2>Verdaechtige Feeder-Paare (Top ${report.suspiciousPairs.length})</h2>`+
     `<table><tr><th>Score</th><th>Main</th><th>Feeder</th><th>Doerfer</th><th>Konz.</th><th>Feeder-ODA</th><th>Burst/1h</th><th>Bewertung</th></tr>${pairRows}</table>`;
   fs.writeFileSync(path.join(OUT,`report-${WORLD}-${stamp}.html`),html);
@@ -143,7 +143,7 @@ function loadGrowth(){
   console.log(`Verdaechtige Mains: ${C.red}${C.b}${mains.length}${C.r} · verdaechtige Paare: ${C.yel}${pairs.length}${C.r}${growth?` · ${C.grn}Wachstum aktiv (${Math.round(growth.days)}d)${C.r}`:` · ${C.gray}(Wachstum: noch keine Historie)${C.r}`}`);
   console.log(`\n${C.b}Top 10 verdaechtige Mains:${C.r}`);
   report.topMains.slice(0,10).forEach(m=>{
-    console.log(`  ${sev(m.score)}${C.b}[${m.score}]${C.r} ${C.b}${m.main}${C.r} ${C.gray}<-${C.r} ${C.red}${m.muleFeeders} Mule-Feeder${C.r}, ${C.yel}${m.villagesReceived} Doerfer${C.r}`);
+    console.log(`  ${sev(m.score)}${C.b}[${m.score}]${C.r} ${C.b}${m.main}${C.r} ${C.gray}<-${C.r} ${C.red}${m.muleFeeders} Proxy-Feeder${C.r}, ${C.yel}${m.villagesReceived} Doerfer${C.r}`);
     if(m.reasons.length) console.log(`      ${C.gray}${m.reasons.join(' · ')}${C.r}`);
   });
   console.log(`\n${C.cyn}Reports:${C.r} ${OUT}`);

@@ -8,7 +8,7 @@ Ein Analyse-Tool für **Die Stämme**, das aus den **offiziellen, öffentlichen*
 
 ## Idee
 
-Ein **Mule/Proxy** adelt seine Dörfer **einseitig an einen Main** ab, ist dabei aber **kampf-inaktiv** (niedrige/keine ODA). Ein **normales Kriegsopfer** verliert zwar auch einseitig Dörfer, hat aber **hohe ODA** (hat gekämpft). Genau daran trennt das Tool **Push** von **Krieg**.
+Ein **Proxy** (Futter-Account) adelt seine Dörfer **einseitig an einen Main** ab, ist dabei aber **kampf-inaktiv** (niedrige/keine ODA). Ein **normales Kriegsopfer** verliert zwar auch einseitig Dörfer, hat aber **hohe ODA** (hat gekämpft). Genau daran trennt das Tool **Push** von **Krieg**.
 
 ## Genutzte Datenquellen (öffentlich)
 
@@ -22,7 +22,7 @@ Ein Feeder→Main-Paar wird als verdächtig gewertet, wenn:
 - der Feeder **≥ N Dörfer einseitig** an denselben Main verliert (`MIN_FLOW`, Standard 3),
 - **keine/kaum Gegen-Adelungen** existieren (`MAX_REV`, Standard 0),
 - der Main **≥ X %** aller Feeder-Verluste bekommt (`CONC`, Standard 75 %),
-- und der Feeder **kampf-inaktiv** ist (ODA `< ODA_MULE`, Standard 20 000) → **„Mule-Verdacht"**.
+- und der Feeder **kampf-inaktiv** ist (ODA `< ODA_MULE`, Standard 20 000) → **„Proxy-Verdacht"**.
 
 Paare mit hoher Feeder-ODA werden als **„kriegsähnlich"** markiert (möglicher normaler Krieg) und niedriger gewichtet. Verdächtige Paare werden zu **Clustern** zusammengefasst.
 
